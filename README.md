@@ -9,7 +9,10 @@ The meter answers associations with no, low or high-level security
 general signing, third-party layers, V.44 compression), GET with block
 transfer and selective access, SET and ACTION, sends pushes, and serves
 the objects of an IS 15959 (Indian smart meter) profile with plausible,
-changing readings. It is reached over the wrapper on TCP or UDP, HDLC
+changing readings. `Meter.Server` hands the same meter (objects,
+profiles, associations, IS 15959 access rights) to dlms's `server`
+package, the library meter side, when the simulator's fault injection is
+not needed. It is reached over the wrapper on TCP or UDP, HDLC
 over TCP as through a serial converter (with a modem and the
 identification service), a serial port with an IEC 62056-21 optical
 head, a data concentrator, an NB-IoT style wake-up link, a LoRaWAN radio
@@ -24,11 +27,11 @@ dependency on it.
 |---|---|
 | `sim` | `Meter`: a DLMS/COSEM meter. Wrapper over TCP (`Listen`) and UDP (`ListenUDP`), HDLC over TCP (`ListenHDLC`, with a modem and the identification service), a serial port with an IEC 62056-21 opening; `NewSession` and `HandleAPDU` for a transport of your own; associations with no, low and high-level security (`HLS`: mechanisms 2 to 7, suites 0 to 2, service-specific and general ciphering with every key-info, general signing, third-party layers, compression, dedicated keys, the broadcast key, the one application context a meter accepts), GET with block transfer and range or entry selective access on profiles, SET, ACTION, general block transfer, pushes, image transfer, the security setup object (class 64); `NewIS15959` builds a meter from an IS 15959 Part 1, 2 or 3 profile with plausible readings; `DCU` (a data concentrator in gateway and logical-device mode); `LoRaWANMeter` (a class A or C radio with SCHC on dlms's in-memory network server); NB-IoT style wake-ups; pre-established associations and DLMS APDUs inside M-Bus |
 | `iec6205621sim` | `Meter`: an IEC 62056-21 meter on TCP as through a transparent converter with 7E1 emulated: modes A to E, programming mode (R1 to R6, W1 to W5, E2, partial blocks), annex C formatted codes, the annex B wake-ups, mode D pushes, and the mode E switch to the DLMS meter over HDLC |
-| `cmd/dlmssim` | Serves an IS 15959 meter on TCP, UDP or HDLC |
+| `cmd/dlmssim` | Serves an IS 15959 meter on TCP, UDP or HDLC, with the simulator or (`-engine server`) with dlms's `server` package |
 | `cmd/iec6205621sim` | Serves an IEC 62056-21 meter |
 | `cosemtest`, `lpwantest` | No code: the tests of dlms's client and LoRaWAN bridge against these simulators |
 
-Not simulated: short name referencing, the IEC 62056-8-20 mesh, real
+Not simulated: short name referencing (dlms's `server` package serves it), the IEC 62056-8-20 mesh, real
 radio timing, and meter firmware quirks other than the ones the package
 comments name (for example a meter that hangs up after an ACTION, or
 answers UDP from another port).
@@ -66,6 +69,7 @@ global keys (test values), then serves until interrupted.
 | `-udp` | | UDP address of the wrapper (empty: none) |
 | `-hdlc` | | TCP address of HDLC, as through a serial converter (empty: none) |
 | `-rows` | `48` | entries in each profile and event log |
+| `-engine` | `sim` | `sim`: the simulator, with its test controls; `server`: the same meter on dlms's `server` package (`Meter.Server`) |
 
 `iec6205621sim` takes `-baud` (0 to 6: mode C; A to F: mode B; M: mode
 A), `-password` (programming mode P1), `-address` (the device address it

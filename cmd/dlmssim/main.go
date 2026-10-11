@@ -15,7 +15,8 @@
 // as the profile's association table says. It prints
 // the secrets and global keys it uses, which are test values. Its
 // instantaneous values are counters, and its profiles and event logs hold
-// -rows entries.
+// -rows entries. With -engine server the same meter is served by the
+// dlms module's server package instead of the simulator.
 package main
 
 import (
@@ -38,6 +39,7 @@ import (
 type config struct {
 	profile, serial, password string
 	listen, udp, hdlc         string
+	engine                    string
 	rows                      int
 }
 
@@ -50,6 +52,7 @@ func main() {
 	flag.StringVar(&c.udp, "udp", "", "UDP address of the wrapper (empty: none)")
 	flag.StringVar(&c.hdlc, "hdlc", "", "TCP address of HDLC, as through a serial converter (empty: none)")
 	flag.IntVar(&c.rows, "rows", 48, "entries in each profile and event log")
+	flag.StringVar(&c.engine, "engine", "sim", "sim (the simulator, with its test controls) or server (the dlms module's server package)")
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -63,7 +66,7 @@ func main() {
 }
 
 // start builds the meter and opens its listeners, describing them on w.
-func start(c config, w io.Writer) (*sim.Meter, error) {
+func start(c config, w io.Writer) (io.Closer, error) {
 	if !slices.Contains(is15959.IDs(), c.profile) {
 		return nil, fmt.Errorf("profile %q is not one of %s", c.profile, strings.Join(is15959.IDs(), ", "))
 	}
@@ -73,26 +76,39 @@ func start(c config, w io.Writer) (*sim.Meter, error) {
 	sp, _ := is15959.Get(c.profile)
 	o := sim.IS15959Options{Serial: c.serial, Password: c.password, Rows: c.rows}
 	m := sim.NewIS15959(sp, o)
-	fmt.Fprintf(w, "meter %s, IS 15959 profile %s (%s)\n", c.serial, sp.ID, sp.Title)
+	var closer io.Closer = m
+	listenTCP, listenUDP, listenHDLC := m.Listen, m.ListenUDP, m.ListenHDLC
+	switch c.engine {
+	case "", "sim":
+	case "server":
+		s, err := m.Server()
+		if err != nil {
+			return nil, err
+		}
+		closer, listenTCP, listenUDP, listenHDLC = s, s.ListenWrapper, s.ListenUDP, s.ListenHDLC
+	default:
+		return nil, fmt.Errorf("engine %q is not sim or server", c.engine)
+	}
+	fmt.Fprintf(w, "meter %s, IS 15959 profile %s (%s), engine %s\n", c.serial, sp.ID, sp.Title, c.engine)
 	open := func(what string, listen func(string) (string, error), addr string) error {
 		if addr == "" {
 			return nil
 		}
 		a, err := listen(addr)
 		if err != nil {
-			_ = m.Close()
+			_ = closer.Close()
 			return fmt.Errorf("%s: %w", what, err)
 		}
 		fmt.Fprintf(w, "%s on %s\n", what, a)
 		return nil
 	}
-	if err := open("wrapper over TCP", m.Listen, c.listen); err != nil {
+	if err := open("wrapper over TCP", listenTCP, c.listen); err != nil {
 		return nil, err
 	}
-	if err := open("wrapper over UDP", m.ListenUDP, c.udp); err != nil {
+	if err := open("wrapper over UDP", listenUDP, c.udp); err != nil {
 		return nil, err
 	}
-	if err := open("HDLC over TCP", m.ListenHDLC, c.hdlc); err != nil {
+	if err := open("HDLC over TCP", listenHDLC, c.hdlc); err != nil {
 		return nil, err
 	}
 	for _, a := range sp.Associations {
@@ -101,5 +117,5 @@ func start(c config, w io.Writer) (*sim.Meter, error) {
 	unicast, _, auth := m.Keys()
 	fmt.Fprintf(w, "test secrets: meter reader password %q; global key %s, authentication key %s\n",
 		c.password, hex.EncodeToString(unicast), hex.EncodeToString(auth))
-	return m, nil
+	return closer, nil
 }

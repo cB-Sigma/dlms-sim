@@ -190,6 +190,7 @@ func addrFor(iface, w, h string) string {
 
 // Public client (16), no security, on an IS 15959 Part 1 meter.
 func TestNoSecurity(t *testing.T) {
+	needPeer(t)
 	_, w, h := meter(t, "part1-category-C", 4, sim.IS15959Options{})
 	both(t, func(t *testing.T, iface string) {
 		gurux(t, addrFor(iface, w, h), "--iface", iface, "--client", "16", "--get", clock, "--get", serial)
@@ -200,6 +201,7 @@ func TestNoSecurity(t *testing.T) {
 // clock, a register with scaler and unit, a data object, the block load
 // profile whole (in blocks), by entry and by range.
 func TestLowLevelSecurity(t *testing.T) {
+	needPeer(t)
 	m, w, h := meter(t, "part1-category-C", 400, sim.IS15959Options{})
 	both(t, func(t *testing.T, iface string) {
 		before := m.Blocks()
@@ -215,6 +217,7 @@ func TestLowLevelSecurity(t *testing.T) {
 
 // Utility settings client (48), HLS mechanism 2, Part 1.
 func TestHLSMechanism2(t *testing.T) {
+	needPeer(t)
 	_, w, h := meter(t, "part1-category-C", 4, sim.IS15959Options{})
 	both(t, func(t *testing.T, iface string) {
 		gurux(t, addrFor(iface, w, h), "--iface", iface, "--client", "48", "--auth", "hls", "--password", "UTILITYSECRET016",
@@ -225,6 +228,7 @@ func TestHLSMechanism2(t *testing.T) {
 // Meter reader (32) of a Part 2 meter: low-level security with encrypted
 // APDUs under the global key (suite 0).
 func TestLowLevelSecurityEncrypted(t *testing.T) {
+	needPeer(t)
 	_, w, h := meter(t, "part2-1ph", 4, sim.IS15959Options{})
 	both(t, func(t *testing.T, iface string) {
 		gurux(t, addrFor(iface, w, h), "--iface", iface, "--client", "32", "--auth", "low", "--password", readerPW,
@@ -237,6 +241,7 @@ func TestLowLevelSecurityEncrypted(t *testing.T) {
 // (mechanism 5), security suite 0, authenticated and encrypted APDUs: the
 // clock, a register, the block load profile in blocks.
 func TestHLSGMAC(t *testing.T) {
+	needPeer(t)
 	m, w, h := meter(t, "part2-1ph", 300, sim.IS15959Options{})
 	m.Lock()
 	m.HLS.Mechanism, m.HLS.Secret = 5, nil
@@ -256,6 +261,7 @@ func TestHLSGMAC(t *testing.T) {
 
 // A wrong low-level password is refused.
 func TestLowLevelSecurityWrongPassword(t *testing.T) {
+	needPeer(t)
 	_, w, _ := meter(t, "part1-category-C", 4, sim.IS15959Options{})
 	name := needPeer(t)
 	_, port, _ := net.SplitHostPort(w)

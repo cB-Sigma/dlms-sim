@@ -52,7 +52,13 @@ func TestGeneralCipheringMatrix(t *testing.T) {
 			}
 			forms := r.sim.Forms()
 			general := forms[0xDB] + forms[0xDC] + forms[0xDD]
-			if forms[c.tag] == 0 || (c.tag >= 0xDB && len(forms) != 1) || (c.tag < 0xDB && general != 0) {
+			// With a dedicated key, HLS pass 3 goes under the global key
+			// (general-glo), as the association is not yet established.
+			want := 1
+			if c.tag == 0xDC {
+				want = 2
+			}
+			if forms[c.tag] == 0 || (c.tag >= 0xDB && len(forms) != want) || (c.tag < 0xDB && general != 0) {
 				t.Errorf("the meter saw request forms %v, want only %#x", forms, c.tag)
 			}
 			if acc, bad := r.sim.Signed(); c.signing && (acc == 0 || bad != 0) {

@@ -76,7 +76,12 @@ func TestThirdPartyLayers(t *testing.T) {
 			if n := r.sim.ThirdPartyRequests(); n < 2 {
 				t.Errorf("the meter accepted %d third-party requests", n)
 			}
-			if forms := r.sim.Forms(); forms[c.tag] == 0 || len(forms) != 1 {
+			// With a dedicated key, HLS pass 3 goes under the global key.
+			want := 1
+			if c.tag == 0xDC {
+				want = 2
+			}
+			if forms := r.sim.Forms(); forms[c.tag] == 0 || len(forms) != want {
 				t.Errorf("the meter saw request forms %v, want only %#x", forms, c.tag)
 			}
 			if _, bad := r.sim.Signed(); bad != 0 {

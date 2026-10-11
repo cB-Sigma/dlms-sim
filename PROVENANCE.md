@@ -37,6 +37,9 @@ same author from the same documents as the client, so tests against it
 show that the two agree, not that either matches a real meter. See the
 README for the checks against an independent implementation.
 
+`sim/library.go` (v0.2.0) only copies the meter's state into dlms's
+`server` package; the protocol behaviour there is the dlms module's.
+
 ## Test values
 
 All keys, secrets, system titles, serial numbers and readings are test

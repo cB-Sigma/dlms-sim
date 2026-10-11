@@ -21,9 +21,15 @@ import (
 // and is refused with a wrong one; the UDP and HDLC listeners open. A
 // profile that does not exist and a runner with nothing to serve fail.
 func TestStart(t *testing.T) {
+	for _, engine := range []string{"sim", "server"} {
+		t.Run(engine, func(t *testing.T) { testStart(t, engine) })
+	}
+}
+
+func testStart(t *testing.T, engine string) {
 	var out bytes.Buffer
 	m, err := start(config{profile: "part1-category-C", serial: "00000042", password: "SECRET12",
-		listen: "127.0.0.1:0", udp: "127.0.0.1:0", hdlc: "127.0.0.1:0", rows: 4}, &out)
+		listen: "127.0.0.1:0", udp: "127.0.0.1:0", hdlc: "127.0.0.1:0", rows: 4, engine: engine}, &out)
 	if err != nil {
 		t.Fatal(err)
 	}

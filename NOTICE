@@ -17,7 +17,7 @@ Dependencies
 
 - github.com/cB-Sigma/dlms (the client the tests drive the simulators
   with; the simulators use its HDLC, wrapper, gateway, physical layer,
-  LoRaWAN, IEC 62056-21 and IS 15959 packages): Apache-2.0, Copyright
+  LoRaWAN, IEC 62056-21, IS 15959, classes and server packages): Apache-2.0, Copyright
   2026 Abhinav Gautam.
 - github.com/cB-Sigma/schc (V.44 compression and SCHC for LoRaWAN) and
   github.com/cB-Sigma/iotsec (through dlms): Apache-2.0, Copyright 2026

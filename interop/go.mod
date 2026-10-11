@@ -8,11 +8,14 @@ go 1.25
 replace github.com/cB-Sigma/dlms-sim => ../
 
 require (
-	github.com/cB-Sigma/dlms v0.1.0
+	github.com/cB-Sigma/dlms v0.2.0
 	github.com/cB-Sigma/dlms-sim v0.0.0
 )
 
 require (
-	github.com/cB-Sigma/schc v0.1.1 // indirect
+	github.com/cB-Sigma/iotsec v0.1.0 // indirect
+	github.com/cB-Sigma/schc v0.2.0 // indirect
+	github.com/goburrow/serial v0.1.0 // indirect
 	gitlab.com/circutor-library/gosem v1.3.4 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
