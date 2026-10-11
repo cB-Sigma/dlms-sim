@@ -1,0 +1,52 @@
+dlms-sim (simulated DLMS/COSEM meters, a data concentrator and an
+IEC 62056-21 meter, in Go)
+Copyright 2026 Abhinav Gautam
+
+This module is licensed under the Apache License, Version 2.0 (LICENSE).
+
+The code was written for SigmaM2M, a oneM2M platform, from the published
+standards listed in PROVENANCE.md, by the author of the dlms module. It
+contains no code from other projects. The source files that come from
+SigmaM2M carry no per-file copyright header (the convention of the code
+they come from); the copyright line above covers them. Files added for
+this module carry "Copyright 2026 Abhinav Gautam" and
+"SPDX-License-Identifier: Apache-2.0".
+
+Dependencies
+------------
+
+- github.com/cB-Sigma/dlms (the client the tests drive the simulators
+  with; the simulators use its HDLC, wrapper, gateway, physical layer,
+  LoRaWAN, IEC 62056-21 and IS 15959 packages): Apache-2.0, Copyright
+  2026 Abhinav Gautam.
+- github.com/cB-Sigma/schc (V.44 compression and SCHC for LoRaWAN) and
+  github.com/cB-Sigma/iotsec (through dlms): Apache-2.0, Copyright 2026
+  Abhinav Gautam.
+- gitlab.com/circutor-library/gosem v1.3.4: MIT License, "Copyright for
+  portions of project gosem are held by nyot, 2022. All other copyright
+  are held by Circutor, 2022." The simulator decodes and encodes APDUs
+  with its pkg/axdr, pkg/dlms and pkg/hdlc; no gosem code is copied
+  into this module.
+- github.com/goburrow/serial v0.1.0 (through dlms): MIT License,
+  Copyright (c) 2015 Quoc-Viet Nguyen.
+- gopkg.in/yaml.v3 v3.0.1 (through dlms): MIT and Apache-2.0.
+- Otherwise the Go standard library only.
+
+Test values
+-----------
+
+The simulator's default secrets ("ABCDEFGH", "UTILITYSECRET016",
+"FIRMWARESECRET16"), keys (0x30..., 0x31..., 0x60..., 0x61... repeated),
+system titles, serial numbers and readings are test values, not those of
+any meter. Its signing and key agreement keys are generated at run time.
+Do not use them on real meters.
+
+Trademarks
+----------
+
+DLMS and COSEM are names of the DLMS User Association. IEC 62056 is
+published by the International Electrotechnical Commission, EN 13757 by
+CEN, and IS 15959 by the Bureau of Indian Standards. These names are used
+only to say which protocols the simulators speak. This project is not
+affiliated with, certified by, sponsored or endorsed by any of these
+bodies, and the simulators are not conformance references.
