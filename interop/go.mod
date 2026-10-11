@@ -8,7 +8,7 @@ go 1.25
 replace github.com/cB-Sigma/dlms-sim => ../
 
 require (
-	github.com/cB-Sigma/dlms v0.2.0
+	github.com/cB-Sigma/dlms v0.3.0
 	github.com/cB-Sigma/dlms-sim v0.0.0
 )
 

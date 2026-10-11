@@ -40,6 +40,14 @@ README for the checks against an independent implementation.
 `sim/library.go` (v0.2.0) only copies the meter's state into dlms's
 `server` package; the protocol behaviour there is the dlms module's.
 
+In v0.3.0 the data concentrator, the IEC 62056-21 meter, the IS 15959
+meter's value generation and the LoRaWAN and NB-IoT ends moved into the
+dlms module (`concentrator`, `iec6205621/meter`, `is15959/meter`,
+`lpwan/enddevice`), same authorship; this module keeps thin wrappers
+with its fault switches and counters. The DLMS meter itself (`sim.Meter`)
+stays here, written separately from dlms's `server` package so that the
+two keep checking each other.
+
 ## Test values
 
 All keys, secrets, system titles, serial numbers and readings are test

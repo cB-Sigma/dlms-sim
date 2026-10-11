@@ -18,7 +18,11 @@ identification service), a serial port with an IEC 62056-21 optical
 head, a data concentrator, an NB-IoT style wake-up link, a LoRaWAN radio
 with SCHC, inside M-Bus, or any transport of your own. It is built on
 [dlms](https://github.com/cB-Sigma/dlms) and gosem's APDU encoders,
-without cgo. Written for SigmaM2M, a oneM2M platform; it has no
+without cgo. The data concentrator, the IEC 62056-21 meter, the IS 15959
+meter's objects and values and the LoRaWAN and NB-IoT ends are dlms's
+library packages (`concentrator`, `iec6205621/meter`, `is15959/meter`,
+`lpwan/enddevice`); this module adds the simulated meter's fault
+switches and counters and the tests that drive them. Written for SigmaM2M, a oneM2M platform; it has no
 dependency on it.
 
 ## What is simulated

@@ -6,10 +6,12 @@ package sim
 // settings and firmware clients with HLS (mechanism 2, or 5), APDU protection per
 // association), access rights enforced per client, the methods commands
 // use (disconnect control, script tables, image transfer) acting on the
-// meter's state, and pushes sent as data-notifications.
+// meter's state, and pushes sent as data-notifications. The objects, their
+// values and the associations come from the dlms library's IS 15959 meter
+// builder (package is15959/meter); this simulator serves them with its
+// own fault switches and counters.
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -24,319 +26,86 @@ import (
 	"gitlab.com/circutor-library/gosem/pkg/hdlc"
 
 	"github.com/cB-Sigma/dlms/is15959"
+	ismeter "github.com/cB-Sigma/dlms/is15959/meter"
 )
 
 // Keys are one association's keys (16 bytes each, suite 0).
-type Keys struct {
-	Key, AuthKey []byte
-}
+type Keys = ismeter.Keys
 
-// IS15959Options configure NewIS15959.
-type IS15959Options struct {
-	Serial      string // meter serial number (default "00000001")
-	Flag        string // manufacturer FLAG ID, 3 letters (default "SGM")
-	Password    string // meter reader LLS secret (default "ABCDEFGH")
-	HLSSecret   string // utility settings HLS secret, mechanism 2 (default "UTILITYSECRET016")
-	FWSecret    string // firmware association HLS secret (default "FIRMWARESECRET16")
-	HLSKeys     Keys   // global keys (utility settings, firmware; default for the others)
-	ReaderKeys  Keys   // meter reader global keys (default HLSKeys)
-	PushKeys    Keys   // push association global keys (default HLSKeys)
-	IHDKeys     Keys   // the IHD association's own global keys (default 0x60…, 0x61…)
-	SystemTitle []byte // the meter's (default FLAG ‖ 5 serial bytes)
-	Rows        int    // rows per profile and event log (default 4)
-	Now         time.Time
-}
-
-func (o *IS15959Options) defaults() {
-	if o.Serial == "" {
-		o.Serial = "00000001"
-	}
-	if o.Flag == "" {
-		o.Flag = "SGM"
-	}
-	if o.Password == "" {
-		o.Password = "ABCDEFGH"
-	}
-	if o.HLSSecret == "" {
-		o.HLSSecret = "UTILITYSECRET016"
-	}
-	if o.FWSecret == "" {
-		o.FWSecret = "FIRMWARESECRET16"
-	}
-	if o.SystemTitle == nil {
-		st := []byte(o.Flag)
-		var n [8]byte
-		binary.BigEndian.PutUint64(n[:], serialNumber(o.Serial))
-		o.SystemTitle = append(st, n[3:]...)
-	}
-	if o.Rows == 0 {
-		o.Rows = 4
-	}
-	if o.Now.IsZero() {
-		o.Now = time.Now()
-	}
-	key := func(k *Keys, seed byte) {
-		if k.Key == nil {
-			k.Key = bytes.Repeat([]byte{seed}, 16)
-		}
-		if k.AuthKey == nil {
-			k.AuthKey = bytes.Repeat([]byte{seed + 1}, 16)
-		}
-	}
-	// One global key serves the reader, settings, firmware and push
-	// associations (Part 2 clause 7.3.1 as amended).
-	key(&o.HLSKeys, 0x30)
-	if o.ReaderKeys.Key == nil {
-		o.ReaderKeys = o.HLSKeys
-	}
-	if o.PushKeys.Key == nil {
-		o.PushKeys = o.HLSKeys
-	}
-	key(&o.IHDKeys, 0x60)
-}
-
-func serialNumber(s string) uint64 {
-	var n uint64
-	for _, c := range s {
-		if c >= '0' && c <= '9' {
-			n = n*10 + uint64(c-'0')
-		}
-	}
-	return n
-}
-
-// DeviceID is the meter's device ID: FLAG ID followed by the serial
-// number (IS 15959 Part 2 push capture objects).
-func (o IS15959Options) DeviceID() string { return o.Flag + o.Serial }
-
-// nameplateYear is the simulated year of manufacture: the year before now.
-func (o IS15959Options) nameplateYear() int {
-	if o.Now.IsZero() {
-		return time.Now().Year() - 1
-	}
-	return o.Now.Year() - 1
-}
+// IS15959Options configure NewIS15959 (the library builder's options).
+type IS15959Options = ismeter.Options
 
 // NewIS15959 builds a meter for an is15959 profile.
 func NewIS15959(spec *is15959.Spec, o IS15959Options) *Meter {
-	o.defaults()
+	o = o.Defaults()
 	m := &Meter{Spec: spec, Password: "", ClientHLS: map[uint16]*HLS{}}
-	loc, _ := time.LoadLocation("Asia/Kolkata")
-	m.Loc = loc
-	for _, a := range spec.Associations {
-		policy := policyOf(a.Security)
+	m.Loc = o.Location
+	for _, a := range ismeter.Associations(spec, o) {
 		switch {
-		case a.Auth == "low":
-			k := o.ReaderKeys
-			m.ClientHLS[a.Client] = &HLS{Mechanism: 1, Secret: []byte(o.Password), Policy: policy,
-				SystemTitle: o.SystemTitle, Key: k.Key, AuthKey: k.AuthKey}
-		case strings.HasPrefix(a.Auth, "hls"):
-			// Global keys are common to the reader, settings, firmware
-			// and push associations (Part 2 clause 7.3.1, Amendment 1).
-			k := o.HLSKeys
-			h := &HLS{Mechanism: 5, Policy: policy, SystemTitle: o.SystemTitle, Key: k.Key, AuthKey: k.AuthKey,
-				SetupOBIS: a.Setup, MasterKey: bytes.Repeat([]byte{0x50}, 16)}
-			if a.Auth == "hls-aes" {
-				h.Mechanism, h.Secret = 2, []byte(o.HLSSecret)
-				if a.Role == is15959.FW {
-					h.Secret = []byte(o.FWSecret)
-				}
-			}
+		case a.Role == is15959.IHD:
+			m.ClientHLS[a.Client] = &HLS{Unauthenticated: true, Policy: a.Policy, SystemTitle: o.SystemTitle, Key: a.Key, AuthKey: a.AuthKey}
+		case a.Role == is15959.Push:
+			m.PushSecurity = &HLS{Policy: a.Policy, SystemTitle: o.SystemTitle, Key: a.Key, AuthKey: a.AuthKey}
+		case a.Mechanism == 1:
+			m.ClientHLS[a.Client] = &HLS{Mechanism: 1, Secret: a.Secret, Policy: a.Policy,
+				SystemTitle: o.SystemTitle, Key: a.Key, AuthKey: a.AuthKey}
+		case a.Mechanism >= 2:
+			h := &HLS{Mechanism: a.Mechanism, Secret: a.Secret, Policy: a.Policy, SystemTitle: o.SystemTitle, Key: a.Key, AuthKey: a.AuthKey,
+				SetupOBIS: a.Setup, MasterKey: a.MasterKey}
 			if a.Role == is15959.US {
 				m.HLS = h
 			} else {
 				m.ClientHLS[a.Client] = h
 			}
 		}
-		if a.Role == is15959.IHD {
-			m.ClientHLS[a.Client] = &HLS{Unauthenticated: true, Policy: policy, SystemTitle: o.SystemTitle, Key: o.IHDKeys.Key, AuthKey: o.IHDKeys.AuthKey}
-		}
-		if a.Role == is15959.Push {
-			m.PushSecurity = &HLS{Policy: policy, SystemTitle: o.SystemTitle, Key: o.PushKeys.Key, AuthKey: o.PushKeys.AuthKey}
-		}
 	}
-	m.populate(o)
+	m.mu.Lock()
+	if m.objects == nil {
+		m.objects = map[string]axdr.DlmsData{}
+	}
+	if m.profiles == nil {
+		m.profiles = map[string]*Profile{}
+	}
+	ismeter.Populate(store{m}, spec, o)
+	m.profileRows = o.Rows
+	m.image = imageState{blockSize: 64}
+	m.mu.Unlock()
 	return m
 }
 
-func policyOf(s string) byte {
-	switch s {
-	case "authenticated":
-		return 0x10
-	case "encrypted":
-		return 0x20
-	case "authenticated-encrypted":
-		return 0x30
-	}
-	return 0
+// store is the meter's objects and profiles as the library builder's
+// Store (callers hold m.mu).
+type store struct{ m *Meter }
+
+func (s store) Value(class uint16, obis string, attr int8) (axdr.DlmsData, bool) {
+	v, ok := s.m.objects[key(class, obis, attr)]
+	return v, ok
 }
 
-// unitCodes maps unit symbols the catalogue uses to the COSEM unit
-// enumeration and the scaler the simulated meter reports with.
-var unitCodes = map[string]struct {
-	code   uint8
-	scaler int8
-}{
-	"V": {35, -2}, "A": {33, -3}, "Hz": {44, -2}, "W": {27, 0}, "kW": {27, 0}, "VA": {28, 0}, "kVA": {28, 0},
-	"var": {29, 0}, "kvar": {29, 0}, "Wh": {30, 0}, "kWh": {30, 0}, "VAh": {31, 0}, "kVAh": {31, 0},
-	"varh": {32, 0}, "kvarh": {32, 0}, "min": {6, 0}, "s": {7, 0}, "h": {5, 0}, "d": {4, 0}, "%": {56, 0}, "": {255, -3},
+func (s store) SetValue(class uint16, obis string, attr int8, v *axdr.DlmsData) {
+	if s.m.objects == nil {
+		s.m.objects = map[string]axdr.DlmsData{}
+	}
+	s.m.objects[key(class, obis, attr)] = *v
 }
 
-func (m *Meter) populate(o IS15959Options) {
-	sp := m.Spec
-	n := uint32(1)
-	value := func(ob is15959.Object) *axdr.DlmsData {
-		n++
-		switch ob.OBIS {
-		case "0.0.96.1.0.255":
-			return axdr.CreateAxdrOctetString(hex.EncodeToString([]byte(o.Serial)))
-		case "0.0.96.1.2.255", "0.0.42.0.0.255":
-			return axdr.CreateAxdrOctetString(hex.EncodeToString([]byte(o.DeviceID())))
-		case "0.0.96.1.1.255":
-			return axdr.CreateAxdrOctetString(hex.EncodeToString([]byte("SIGMA SIM")))
-		// Nameplate values a real meter would carry, instead of the
-		// placeholder a type gives ("V7" for the category, 63 for the year).
-		case "0.0.96.1.4.255": // year of manufacture
-			return axdr.CreateAxdrLongUnsigned(uint16(o.nameplateYear()))
-		case "1.0.0.2.0.255": // firmware version
-			return axdr.CreateAxdrOctetString(hex.EncodeToString([]byte("SIM-1.4.2")))
-		case "0.0.94.91.11.255": // meter category
-			return axdr.CreateAxdrOctetString(hex.EncodeToString([]byte("C1")))
-		case "0.0.94.91.12.255": // current rating
-			return axdr.CreateAxdrOctetString(hex.EncodeToString([]byte("10-60A")))
-		case is15959.EventStatusWord:
-			return axdr.CreateAxdrBitString(strings.Repeat("0", 128))
-		}
-		if v := plausible(ob); v != nil {
-			return v
-		}
-		return sample(ob.Type, n, o.Now, m.Loc)
+func (s store) Rows(obis string) ([]is15959.Column, [][]*axdr.DlmsData, bool) {
+	p := s.m.profiles[obis]
+	if p == nil {
+		return nil, nil, false
 	}
-	for _, ob := range sp.Objects {
-		switch ob.Class {
-		case is15959.ClassProfileGeneric:
-			continue
-		case is15959.ClassRegister, is15959.ClassExtendedRegister, is15959.ClassDemandRegister:
-			if ob.Attr == 2 {
-				u := unitCodes[ob.Unit]
-				v := value(ob)
-				m.Set(ob.Class, ob.OBIS, 2, v)
-				m.Set(ob.Class, ob.OBIS, is15959.ScalerAttr(ob.Class), axdr.CreateAxdrStructure([]*axdr.DlmsData{axdr.CreateAxdrInteger(u.scaler), axdr.CreateAxdrEnum(u.code)}))
-				switch ob.Class {
-				case is15959.ClassExtendedRegister:
-					m.Set(ob.Class, ob.OBIS, 5, Clock(o.Now.Add(-time.Hour), m.Loc))
-				case is15959.ClassDemandRegister: // last_average_value, capture_time
-					m.Set(ob.Class, ob.OBIS, 3, v)
-					m.Set(ob.Class, ob.OBIS, 6, Clock(o.Now.Add(-time.Hour), m.Loc))
-				}
-				continue
-			}
-		case is15959.ClassClock:
-			if ob.Attr == 2 {
-				continue // the clock runs
-			}
-		}
-		if ob.Class == is15959.ClassPushSetup && ob.Attr == 2 {
-			if ps := sp.PushSetup(ob.OBIS); ps != nil {
-				m.SetPushList(ob.OBIS, ps.Capture)
-			} else {
-				m.Set(ob.Class, ob.OBIS, 2, axdr.CreateAxdrArray(nil))
-			}
-			continue
-		}
-		m.Set(ob.Class, ob.OBIS, ob.Attr, value(ob))
+	cols := make([]is15959.Column, len(p.Columns))
+	for i, c := range p.Columns {
+		cols[i] = is15959.Column{Class: c.Class, OBIS: c.OBIS, Attr: c.Attr}
 	}
-	m.profileRows = o.Rows
-	for _, p := range sp.Profiles {
-		m.profileOf(p, o)
-	}
-	for _, l := range sp.Events {
-		m.eventLog(l, o)
-	}
-	// Disconnect control: connected (1), control_mode 4 (remote
-	// disconnection and direct remote reconnection, local disconnection).
-	m.Set(is15959.ClassDisconnect, is15959.DisconnectControl, 2, axdr.CreateAxdrBoolean(true))
-	m.Set(is15959.ClassDisconnect, is15959.DisconnectControl, 3, axdr.CreateAxdrEnum(1))
-	m.Set(is15959.ClassDisconnect, is15959.DisconnectControl, 4, axdr.CreateAxdrEnum(4))
-	// The load limiter watches the active power register: its thresholds
-	// are in that register's units (monitored_value, attribute 2).
-	if sp.Object("0.0.17.0.0.255", 3) != nil && sp.Object("1.0.1.7.0.255", 2) != nil {
-		m.Set(is15959.ClassLimiter, "0.0.17.0.0.255", 2, axdr.CreateAxdrStructure([]*axdr.DlmsData{
-			axdr.CreateAxdrLongUnsigned(is15959.ClassRegister), axdr.CreateAxdrOctetString(obisHex("1.0.1.7.0.255")), axdr.CreateAxdrInteger(2)}))
-	}
-	m.image = imageState{blockSize: 64}
-	m.Set(is15959.ClassImageTransfer, imageTransferOBIS(sp), 2, axdr.CreateAxdrDoubleLongUnsigned(64))
-	m.Set(is15959.ClassImageTransfer, imageTransferOBIS(sp), 5, axdr.CreateAxdrBoolean(true))
-	m.Set(is15959.ClassImageTransfer, imageTransferOBIS(sp), 6, axdr.CreateAxdrEnum(0))
+	return cols, p.Rows, true
 }
 
-func imageTransferOBIS(sp *is15959.Spec) string {
-	for _, mt := range sp.Methods {
-		if mt.Class == is15959.ClassImageTransfer {
-			return mt.OBIS
-		}
+func (s store) SetRows(obis string, cols []is15959.Column, rows [][]*axdr.DlmsData) {
+	if s.m.profiles == nil {
+		s.m.profiles = map[string]*Profile{}
 	}
-	return "0.0.44.0.0.255"
-}
-
-// sample is a value of an A-XDR type for the simulated meter.
-func sample(typ string, n uint32, now time.Time, loc *time.Location) *axdr.DlmsData {
-	switch typ {
-	case "boolean":
-		return axdr.CreateAxdrBoolean(true)
-	case "integer":
-		return axdr.CreateAxdrInteger(int8(n % 100))
-	case "long":
-		return axdr.CreateAxdrLong(int16(n))
-	case "double-long":
-		return axdr.CreateAxdrDoubleLong(int32(n) * 10)
-	case "unsigned":
-		return axdr.CreateAxdrUnsigned(uint8(n))
-	case "enum":
-		return axdr.CreateAxdrEnum(1)
-	case "long-unsigned":
-		return axdr.CreateAxdrLongUnsigned(uint16(n * 7))
-	case "double-long-unsigned", "":
-		return axdr.CreateAxdrDoubleLongUnsigned(n * 1000)
-	case "long64-unsigned":
-		return axdr.CreateAxdrLong64Unsigned(uint64(n) * 1000)
-	case "date-time":
-		return Clock(now, loc)
-	case "octet-string":
-		return axdr.CreateAxdrOctetString(hex.EncodeToString([]byte(fmt.Sprintf("V%d", n))))
-	case "visible-string":
-		return axdr.CreateAxdrVisibleString(fmt.Sprintf("V%d", n))
-	case "bit-string":
-		return axdr.CreateAxdrBitString(strings.Repeat("0", 16))
-	case "float32":
-		return axdr.CreateAxdrFloat32(float32(n))
-	case "array":
-		return axdr.CreateAxdrArray(nil)
-	case "structure":
-		return axdr.CreateAxdrStructure(nil)
-	}
-	return axdr.CreateAxdrDoubleLongUnsigned(n)
-}
-
-// cell is the value a capture column holds in a simulated row.
-func (m *Meter) cell(c is15959.Column, at time.Time, i int) *axdr.DlmsData {
-	if c.Class == is15959.ClassClock || c.OBIS == "0.0.0.1.2.255" {
-		return Clock(at, m.Loc)
-	}
-	if v, ok := m.objects[key(c.Class, c.OBIS, c.Attr)]; ok {
-		if f, ok := v.Value.(uint32); ok {
-			return axdr.CreateAxdrDoubleLongUnsigned(f + uint32(i))
-		}
-		if f, ok := v.Value.(uint16); ok {
-			return axdr.CreateAxdrLongUnsigned(f + uint16(i))
-		}
-		cp := v
-		return &cp
-	}
-	if is15959.IsTimeAttr(c.Class, c.Attr) {
-		return Clock(at, m.Loc)
-	}
-	return axdr.CreateAxdrDoubleLongUnsigned(uint32(100 + i))
+	s.m.profiles[obis] = &Profile{Columns: columnsOf(cols), Rows: rows}
 }
 
 func columnsOf(cs []is15959.Column) []Column {
@@ -347,91 +116,9 @@ func columnsOf(cs []is15959.Column) []Column {
 	return out
 }
 
-func (m *Meter) profileOf(p is15959.Profile, o IS15959Options) {
-	m.SetProfile(p.OBIS, m.buildProfile(p, o.Now, o.Rows))
-	if !scalerBuffer(p) {
-		m.Set(7, p.OBIS, 4, axdr.CreateAxdrDoubleLongUnsigned(uint32(p.Period/time.Second)))
-	}
-}
-
-// buildProfile is a profile's buffer at now with rows entries (callers
-// hold m.mu or have the meter to themselves).
-func (m *Meter) buildProfile(p is15959.Profile, now time.Time, rows int) *Profile {
-	pr := &Profile{Columns: columnsOf(p.Capture)}
-	if scalerBuffer(p) {
-		// A scaler profile: one entry holding each column's scaler_unit.
-		var row []*axdr.DlmsData
-		for _, c := range p.Capture {
-			if v, ok := m.objects[key(c.Class, c.OBIS, c.Attr)]; ok {
-				cp := v
-				row = append(row, &cp)
-			} else {
-				row = append(row, axdr.CreateAxdrStructure([]*axdr.DlmsData{axdr.CreateAxdrInteger(0), axdr.CreateAxdrEnum(255)}))
-			}
-		}
-		pr.Rows = [][]*axdr.DlmsData{row}
-		return pr
-	}
-	step := p.Period
-	if step == 0 {
-		step = 24 * time.Hour
-	}
-	end := now.Truncate(step)
-	for i := rows - 1; i >= 0; i-- {
-		at := end.Add(-time.Duration(i) * step)
-		row := make([]*axdr.DlmsData, len(p.Capture))
-		for j, c := range p.Capture {
-			if p.Period > 0 {
-				if v := m.periodCell(c, at, now, p.Period, rows-i); v != nil {
-					row[j] = v
-					continue
-				}
-			}
-			row[j] = m.cell(c, at, rows-i)
-		}
-		pr.Rows = append(pr.Rows, row)
-	}
-	if p.Period > 0 {
-		m.keepLastAverages(p, pr)
-	}
-	return pr
-}
-
-// scalerBuffer reports whether a profile is a scaler profile.
-func scalerBuffer(p is15959.Profile) bool {
-	return strings.HasPrefix(p.OBIS, "1.0.94.91.") && p.Period == 0 && isScalerProfile(p)
-}
-
-func isScalerProfile(p is15959.Profile) bool {
-	for _, c := range p.Capture {
-		if c.Attr == 0 || c.Attr != is15959.ScalerAttr(c.Class) {
-			return false
-		}
-	}
-	return len(p.Capture) > 0
-}
-
-// eventLog fills an event log with one row per event code (up to Rows),
-// the code in the event code column.
-func (m *Meter) eventLog(l is15959.EventLog, o IS15959Options) {
-	pr := &Profile{Columns: columnsOf(l.Capture)}
-	for i, e := range l.Codes {
-		if i >= o.Rows {
-			break
-		}
-		at := o.Now.Add(-time.Duration(len(l.Codes)-i) * time.Hour).Truncate(time.Second)
-		row := make([]*axdr.DlmsData, len(l.Capture))
-		for j, c := range l.Capture {
-			if c.OBIS == l.CodeOBIS || strings.HasPrefix(c.OBIS, "0.0.96.11.") {
-				row[j] = axdr.CreateAxdrLongUnsigned(uint16(e.Code))
-				continue
-			}
-			row[j] = m.cell(c, at, i)
-		}
-		pr.Rows = append(pr.Rows, row)
-		m.Set(1, l.CodeOBIS, 2, axdr.CreateAxdrLongUnsigned(uint16(e.Code)))
-	}
-	m.SetProfile(l.OBIS, pr)
+// cell is the value a capture column holds in a row (callers hold m.mu).
+func (m *Meter) cell(c is15959.Column, at time.Time, i int) *axdr.DlmsData {
+	return ismeter.Cell(store{m}, c, at, i, m.Loc)
 }
 
 // allowed checks a client's right on an attribute or method (callers do
@@ -1122,60 +809,6 @@ func (m *Meter) Rows(obis string) [][]*axdr.DlmsData {
 	defer m.mu.Unlock()
 	if p := m.profiles[obis]; p != nil {
 		return append([][]*axdr.DlmsData(nil), p.Rows...)
-	}
-	return nil
-}
-
-// plausibleValues are register values a household meter of the simulated
-// rating (10-60 A) could show, instead of the stepped placeholders sample
-// gives (a maximum demand of 32,000 W beside a load of 1.7 kW): demand in
-// W and energy in Wh (scaler 0, unitCodes), durations in minutes, counts.
-// Tariff registers share the total between them.
-var plausibleValues = map[string]uint32{
-	"maxDemandActive":            4200, // W, the month's highest demand
-	"maxDemandApparent":          4500, // VA
-	"billingCount":               12,
-	"powerOnDuration":            41760,  // min, this billing period (29 days)
-	"powerOnDurationTotal":       786240, // min, about a year and a half
-	"powerFailureDuration":       380,    // min
-	"activeEnergyImportPeriod":   182000, // Wh this billing period
-	"apparentEnergyImportPeriod": 196000,
-	"tamperCount":                2,
-	"programmingCount":           3,
-	"loadLimit":                  6000, // W, the limiter's threshold for the sanctioned load
-	"powerFailures":              17,
-}
-
-func plausible(ob is15959.Object) *axdr.DlmsData {
-	name := ob.Name
-	tariff := 0
-	if i := strings.LastIndex(name, "T"); i > 0 && i == len(name)-2 && name[i+1] >= '1' && name[i+1] <= '8' {
-		tariff = int(name[i+1] - '0')
-		name = name[:i]
-	}
-	v, ok := plausibleValues[name]
-	if !ok {
-		return nil
-	}
-	if tariff > 0 {
-		// A tariff zone's share: its demand a little lower, its energy a part of the total.
-		if strings.HasPrefix(name, "maxDemand") {
-			v -= uint32(tariff) * 250
-		} else {
-			v /= 4
-		}
-	}
-	switch ob.Type {
-	case "long-unsigned":
-		return axdr.CreateAxdrLongUnsigned(uint16(min(v, 65535)))
-	case "unsigned":
-		return axdr.CreateAxdrUnsigned(uint8(min(v, 255)))
-	case "double-long":
-		return axdr.CreateAxdrDoubleLong(int32(v))
-	case "long64-unsigned":
-		return axdr.CreateAxdrLong64Unsigned(uint64(v))
-	case "double-long-unsigned", "":
-		return axdr.CreateAxdrDoubleLongUnsigned(v)
 	}
 	return nil
 }
